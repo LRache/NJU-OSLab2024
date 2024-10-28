@@ -8,6 +8,7 @@
 #include <time.h>
 #include <string.h>
 #include <unistd.h>
+#include <omp.h>
 
 #include "thread.h"
 #include "thread-sync.h"
@@ -90,6 +91,7 @@ void matmul_forward(float* out,
     // OC is short for "output channels"
     // inp is (B,T,C), weight is (OC, C), bias is (OC)
     // out will be (B,T,OC)
+    #pragma omp parallel
     for (int b = 0; b < B; b++) {
         for (int t = 0; t < T; t++) {
             float* out_bt = out + b * T * OC + t * OC;
@@ -564,6 +566,7 @@ int sample_mult(float* probabilities, int n) {
 
 int main(int argc, char** argv) {
     GPT2 model;
+    omp_set_num_threads(6);
     gpt2_build_from_checkpoint(&model, "gpt2_124M.bin");
     const int n = 10;  // Token limit.
 

@@ -38,7 +38,7 @@ void *wrapper_(void *arg) {
 // Create a thread that calls function fn. fn takes an integer
 // thread id as input argument.
 static inline
-void create(void *fn) {
+void create(void (*fn)(int)) {
     assert(n_ < LENGTH(threads_));
 
     // Yes, we have resource leak here!
