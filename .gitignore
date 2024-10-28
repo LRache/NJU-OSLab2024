@@ -1,5 +1,5 @@
 build
 .cache
 *.so
-*-test-32
-*-test-64
+*-32
+*-64
