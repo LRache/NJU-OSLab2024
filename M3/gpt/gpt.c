@@ -88,40 +88,63 @@ void layernorm_forward(float* out, float* mean, float* rstd,
 
 #ifdef USE_MULTITHREAD
 #define THREAD_COUNT 8
-static sem_t sems[THREAD_COUNT];
-static int beat;
+static sem_t empty;
+static sem_t fill;
+static mutex_t mutex;
+static int n;
 
 static float *matmul_out;
 static float *matmul_inp;
 static float *matmul_weight;
 static float *matmul_bias;
-static int matmul_T;
+static int matmul_b;
 static int matmul_C;
 static int matmul_OC;
+static int exitFlag;
+
+void do_matmul_forward(int);
 
 void matmul_thread_init() {
+    SEM_INIT(&empty, 0);
+    SEM_INIT(&fill , 0);
+    mutex_init(&mutex);
+    exitFlag = 0;
+    
     for (int i = 0; i < THREAD_COUNT; i++) {
-        SEM_INIT(&sems[i], 0);
+        create(do_matmul_forward);
+    }
+}
+
+void matmul_thread_deinit() {
+    exitFlag = 1;
+    for (int i = 0; i < THREAD_COUNT; i++) {
+        V(&empty);
     }
 }
 
 void do_matmul_forward(int id) {
-    int b = id;
     while (1) {
-        P(&sems[id]);
-        for (int t = 0; t < matmul_T; t++) {
-            float* out_bt = matmul_out + b * matmul_T * matmul_OC + t * matmul_OC;
-            float* inp_bt = matmul_inp + b * matmul_T * matmul_C + t * matmul_C;
-            for (int o = 0; o < matmul_OC; o++) {
-                float val = (matmul_bias != NULL) ? matmul_bias[o] : 0.0f;
-                float* wrow = matmul_weight + o*matmul_C;
-                for (int i = 0; i < matmul_C; i++) {
-                    val += inp_bt[i] * wrow[i];
-                }
-                out_bt[o] = val;
+        P(&empty);
+        if (exitFlag) break;
+        
+        mutex_lock(&mutex);
+        n--;
+        int matmul_t = n;
+        assert(matmul_t >= 0);
+        mutex_unlock(&mutex);
+
+        float* out_bt = matmul_out + matmul_b * matmul_t * matmul_OC + matmul_t * matmul_OC;
+        float* inp_bt = matmul_inp + matmul_b * matmul_t * matmul_C  + matmul_t * matmul_C;
+        for (int o = 0; o < matmul_OC; o++) {
+            float val = (matmul_bias != NULL) ? matmul_bias[o] : 0.0f;
+            float* wrow = matmul_weight + o*matmul_C;
+            for (int i = 0; i < matmul_C; i++) {
+                val += inp_bt[i] * wrow[i];
             }
+            out_bt[o] = val;
         }
-        V(&sems[id]);
+
+        V(&fill);
     }
 }
 #endif
@@ -134,16 +157,22 @@ void matmul_forward(float* out,
     matmul_inp = inp;
     matmul_weight = weight;
     matmul_bias = bias;
-    matmul_T = T;
     matmul_C = C;
     matmul_OC = OC;
-    int count = B < THREAD_COUNT ? B : THREAD_COUNT;
-    for (int i = 0; i < count; i++) {
-        V(&sems[i]);
+    for (int b = 0; b < B; b++) {
+        matmul_b = b;
+        mutex_lock(&mutex);
+        n = T;
+        mutex_unlock(&mutex);
+        for (int i = 0; i < T; i++) {
+            V(&empty);
+        }
+        for (int i = 0; i < T; i++) {
+            P(&fill);
+        }
+        assert(n == 0);
     }
-    for (int i = 0; i < count; i++) {
-        P(&sems[i]);
-    }
+    
     #else
     // most of the running time is spent here and in matmul_backward
     // OC is short for "output channels"
@@ -660,6 +689,9 @@ int main(int argc, char** argv) {
     }
 
     gpt2_free(&model);
+    #ifdef USE_MULTITHREAD
+    matmul_thread_deinit();
+    #endif
 
     return 0;
 }
