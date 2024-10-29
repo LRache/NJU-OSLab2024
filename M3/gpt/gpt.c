@@ -1,6 +1,7 @@
 // Original Author: Andrej Karpathy
 // https://github.com/karpathy/llm.c
 
+#include <assert.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,7 +9,6 @@
 #include <time.h>
 #include <string.h>
 #include <unistd.h>
-#include <omp.h>
 
 #include "thread.h"
 #include "thread-sync.h"
@@ -84,14 +84,71 @@ void layernorm_forward(float* out, float* mean, float* rstd,
     }
 }
 
+#define USE_MULTITHREAD
+
+#ifdef USE_MULTITHREAD
+#define THREAD_COUNT 8
+static sem_t sems[THREAD_COUNT];
+static int beat;
+
+static float *matmul_out;
+static float *matmul_inp;
+static float *matmul_weight;
+static float *matmul_bias;
+static int matmul_T;
+static int matmul_C;
+static int matmul_OC;
+
+void matmul_thread_init() {
+    for (int i = 0; i < THREAD_COUNT; i++) {
+        SEM_INIT(&sems[i], 0);
+    }
+}
+
+void do_matmul_forward(int id) {
+    int b = id;
+    while (1) {
+        P(&sems[id]);
+        for (int t = 0; t < matmul_T; t++) {
+            float* out_bt = matmul_out + b * matmul_T * matmul_OC + t * matmul_OC;
+            float* inp_bt = matmul_inp + b * matmul_T * matmul_C + t * matmul_C;
+            for (int o = 0; o < matmul_OC; o++) {
+                float val = (matmul_bias != NULL) ? matmul_bias[o] : 0.0f;
+                float* wrow = matmul_weight + o*matmul_C;
+                for (int i = 0; i < matmul_C; i++) {
+                    val += inp_bt[i] * wrow[i];
+                }
+                out_bt[o] = val;
+            }
+        }
+        V(&sems[id]);
+    }
+}
+#endif
+
 void matmul_forward(float* out,
                     float* inp, float* weight, float* bias,
                     int B, int T, int C, int OC) {
+    #ifdef USE_MULTITHREAD
+    matmul_out = out;
+    matmul_inp = inp;
+    matmul_weight = weight;
+    matmul_bias = bias;
+    matmul_T = T;
+    matmul_C = C;
+    matmul_OC = OC;
+    int count = B < THREAD_COUNT ? B : THREAD_COUNT;
+    for (int i = 0; i < count; i++) {
+        V(&sems[i]);
+    }
+    for (int i = 0; i < count; i++) {
+        P(&sems[i]);
+    }
+    #else
     // most of the running time is spent here and in matmul_backward
     // OC is short for "output channels"
     // inp is (B,T,C), weight is (OC, C), bias is (OC)
     // out will be (B,T,OC)
-    #pragma omp parallel
     for (int b = 0; b < B; b++) {
         for (int t = 0; t < T; t++) {
             float* out_bt = out + b * T * OC + t * OC;
@@ -106,6 +163,7 @@ void matmul_forward(float* out,
             }
         }
     }
+    #endif
 }
 
 void attention_forward(float* out, float* preatt, float* att,
@@ -565,8 +623,10 @@ int sample_mult(float* probabilities, int n) {
 #define GPT2_EOT 50256
 
 int main(int argc, char** argv) {
+    #ifdef USE_MULTITHREAD
+    matmul_thread_init();
+    #endif
     GPT2 model;
-    omp_set_num_threads(6);
     gpt2_build_from_checkpoint(&model, "gpt2_124M.bin");
     const int n = 10;  // Token limit.
 
