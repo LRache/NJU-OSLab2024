@@ -3,3 +3,4 @@ build
 *.so
 *-32
 *-64
+compile_commands.json
