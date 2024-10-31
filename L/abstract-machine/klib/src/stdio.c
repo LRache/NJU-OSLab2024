@@ -11,6 +11,7 @@ typedef struct FmtBuffer {
   size_t cnt;
   size_t limit;
   void (*write)(struct FmtBuffer *buffer, char c);
+  int endFlag;
 } FmtBuffer;
 
 static void out_buffer_init(FmtBuffer *buffer, char *out, size_t limit);
@@ -54,6 +55,7 @@ static void out_buffer_init(FmtBuffer *buffer, char *out, size_t limit) {
     buffer->cnt = 0;
     buffer->limit = limit;
     buffer->write = write_buffer_out;
+    buffer->endFlag = 1;
 }
 
 static void putch_buffer_init(FmtBuffer *buffer) {
@@ -61,6 +63,7 @@ static void putch_buffer_init(FmtBuffer *buffer) {
     buffer->cnt = 0;
     buffer->limit = 0;
     buffer->write = write_buffer_putch;
+    buffer->endFlag = 0;
 }
 
 static void write_buffer_out(FmtBuffer *buffer, char c) {
@@ -209,6 +212,29 @@ static void __fmt_hex(FmtBuffer *buffer, va_list ap, char *arg, char base, int w
     while (t > h) buffer->write(buffer, *(--t)); 
 }
 
+static void __fmt_hex_64(FmtBuffer *buffer, va_list ap, char *arg, char base, int width, char fill) {
+    unsigned long long d = va_arg(ap, unsigned long long);
+    
+    char stack[20] = {};
+    char *t = stack;
+    if (d == 0) {
+        *(t++) = '0';
+        width--;
+    } else {
+        while (d) {
+            int x = d % 16;
+            if (x > 9) *(t++) = x - 10 + base;
+            else *(t++) = x + '0';
+            d = d / 16;
+            width--;
+        }
+    }
+
+    for (int i = width; i > 0; i--) buffer->write(buffer, fill);
+    char *h = stack;
+    while (t > h) buffer->write(buffer, *(--t)); 
+}
+
 static void __fmt_x(FmtBuffer *buffer, va_list ap, char *arg) {
     __fmt_hex(buffer, ap, arg, 'a', -1, 0);
 }
@@ -220,7 +246,8 @@ static void __fmt_X(FmtBuffer *buffer, va_list ap, char *arg) {
 static void __fmt_p(FmtBuffer *buffer, va_list ap, char *arg) {
     buffer->write(buffer, '0');
     buffer->write(buffer, 'x');
-    __fmt_hex(buffer, ap, arg, 'a', 8, '0');
+    if (sizeof(void *) == 4) __fmt_hex(buffer, ap, arg, 'a', 8, '0');
+    else __fmt_hex_64(buffer, ap, arg, 'a', 16, '0');
 }
 
 static void __fmt_llu(FmtBuffer *buffer, va_list ap, char *arg) {
@@ -280,7 +307,7 @@ static int __bprintf(FmtBuffer *buffer, const char *fmt, va_list ap) {
             buffer->write(buffer, *(p++));
         }
     }
-    buffer->write(buffer, 0);
+    if (buffer->endFlag) buffer->write(buffer, 0);
     return buffer->cnt;
 }
 

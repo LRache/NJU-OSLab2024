@@ -18,7 +18,7 @@
 #include <klib-macros.h>
 
 struct kernel_stack {
-  uint8_t stack[8192];
+  uint8_t stack[8 * (1 << 12)];
 };
 
 static inline void *stack_top(struct kernel_stack *stk) {
