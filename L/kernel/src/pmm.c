@@ -19,22 +19,39 @@ static uint8_t bitmap[4][BITMAP_SIZE]; // 256 kb per segment bitmap for heap
 
 static int is_avaliable_helper(size_t heapIndex, size_t parent, int order) {
     size_t offset = parent * 2 + order;
-    if (offset >= BITMAP_SIZE) return 1;
+    // printf("%u\n", offset);
+    if ((offset >> 3) >= BITMAP_SIZE) return 1;
     size_t blockOffset = offset >> 3;
     size_t innerOffset = offset & 0b111;
     uint8_t mask = (1 << innerOffset);
-    int avaliable = (bitmap[heapIndex][blockOffset] & mask) == 0;
+    // printf("A\n");
+    int avaliable;
+    avaliable = (bitmap[heapIndex][blockOffset] & mask) == 0;
+    // printf("%u %u %d %d\n", heapIndex, parent, order, avaliable);
     if (!avaliable) return 0;
-    return is_avaliable_helper(heapIndex, offset, 1) && is_avaliable_helper(heapIndex, offset, 2);
+    avaliable = is_avaliable_helper(heapIndex, offset, 1);
+    if (!avaliable) return 0;
+    return is_avaliable_helper(heapIndex, offset, 2);
 }
 
-static int is_avaliable(size_t heapIndex, size_t parent, int order) {
-    // size_t offset = parent * 2 + order;
-    // size_t blockOffset = offset >> 3;
-    // size_t innerOffset = offset & 0b111;
-    // uint8_t mask = (1 << innerOffset);
+// static int is_avaliable(size_t heapIndex, size_t parent, int order) {
+//     // size_t offset = parent * 2 + order;
+//     // size_t blockOffset = offset >> 3;
+//     // size_t innerOffset = offset & 0b111;
+//     // uint8_t mask = (1 << innerOffset);
+//     spin_lock(&lock);
+//     int avaliable = is_avaliable_helper(heapIndex, parent, order);
+//     spin_unlock(&lock);
+//     return avaliable;
+// }
+
+static int is_avaliable_block(size_t heapIndex, size_t parent, int order) {
+    size_t offset = parent * 2 + order;
+    size_t blockOffset = offset >> 3;
+    size_t innerOffset = offset & 0b111;
+    uint8_t mask = (1 << innerOffset);
     spin_lock(&lock);
-    int avaliable = is_avaliable_helper(heapIndex, parent, order);
+    int avaliable = (bitmap[heapIndex][blockOffset] & mask) == 0;
     spin_unlock(&lock);
     return avaliable;
 }
@@ -46,10 +63,11 @@ static int alloc_if_avaliable(size_t heapIndex, size_t parent, int order) {
     uint8_t mask = (1 << innerOffset);
     assert(blockOffset < BITMAP_SIZE);
     spin_lock(&lock);
-    int avaliable = (bitmap[heapIndex][blockOffset] & mask) == 0;
+    int avaliable = is_avaliable_helper(heapIndex, parent, order);
     if (avaliable) {
         bitmap[heapIndex][blockOffset] |= mask;
     }
+    // printf("%u %u %d %x\n", heapIndex, parent, order, bitmap[heapIndex][blockOffset]);
     spin_unlock(&lock);
     return avaliable;
 }
@@ -59,17 +77,13 @@ static void *binary_find_and_alloc(size_t allocLength, size_t heapIndex, size_t 
     assert(length <= SEG_LENGTH);
     assert(length >= 3);
     assert(length >= allocLength);
-    if ((start & 0b111) != 0) {
-        printf("start=0x%x length=%d\n", start, length);
-        panic("start do not align to 0x8");
-    }
     assert((start & 0b111) == 0);
     assert(start >= HEAP_START);
     
     if (start + (1 << allocLength) > HEAP_END) {
         return NULL;
     }
-    if (!is_avaliable(heapIndex, parent, order)) {
+    if (!is_avaliable_block(heapIndex, parent, order)) {
         return NULL;
     }
     
