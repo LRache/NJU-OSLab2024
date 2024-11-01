@@ -3,4 +3,5 @@ build
 *.so
 *-32
 *-64
+*.log
 compile_commands.json
