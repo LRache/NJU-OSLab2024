@@ -13,9 +13,9 @@ static void os_init() {
 }
 
 static void os_run() {
-    printf("Hello World from CPU #%d\n", cpu_current());
+    // printf("Hello World from CPU #%d\n", cpu_current());
     void *array[1000] = {};
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < 1000; i++) {
         size_t s = i + 4;
         void *p = pmm->alloc(s);
         spin_lock(&lock);
@@ -23,13 +23,15 @@ static void os_run() {
         spin_unlock(&lock);
         array[i] = p;
     }
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < 1000; i++) {
         void *p = array[i];
         spin_lock(&lock);
         printf("%d %d free %p\n", cpu_current(), i, p);
         spin_unlock(&lock);
         pmm->free(p);
     }
+    // printf("%p\n", pmm->alloc( 1));
+    // printf("%p\n", pmm->alloc(15));
     while (1) ;
 }
 
